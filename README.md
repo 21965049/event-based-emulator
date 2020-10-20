@@ -1,4 +1,4 @@
-# event-based-emulator
+# event-based-emulator [IN ACTIVE DEVELOPMENT]
 Python implementation of an event-based emulator
 
 Make sure all the necessary libraries are installed and correctly imported
