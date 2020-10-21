@@ -26,10 +26,10 @@ exposure_time = 0.1   # aka integration time, or timeslot when pixels can 'charg
 charge_rate = 1  # how much a pixel should be charged by, per time interval, as an integer value
 charge_speed = 0.0005  # time in seconds for every increment of charge, 0.000392 is approx 1:1 charge relationship with default settings
 event_thres = 15  # pixel integer value increase or decrease that would trigger an event
-arbitrate = True  # set whether there should be arbitration, affects performance, lowers frame update output
+arbitrate = False  # set whether there should be arbitration, affects performance, lowers frame update output
 arbiter_type = "FIFO"  # select arbitration scheme: "FIFO", "RAND", "FAIR"
 delta_thres = 0.0001  # amount of time difference allowed between events before arbitration stops, timespan = earliest spike in the update+delta_thres
-fps = 60  # frames to generate per second
+fps = 30  # frames to generate per second
 frame_time = 1/fps  # the amount of time the emulator is allowed to process a frame for, can output multiple updates over this time with lighter loads
 update_limit = 5  # the amount of updates to frames allowed per frame time, 0 for no limit, 1 = pixels can spike once to event_thres and no more
                   # change this value accordingly to showcase arbitration outputs, the emulator works too fast to see a difference in the final output
@@ -42,7 +42,7 @@ update_limit = 5  # the amount of updates to frames allowed per frame time, 0 fo
 # arbitrate = False
 # arbiter_type = "FIXED"
 # delta_thres = 0.0001
-# fps = 30  # frames to generate per second
+# fps = 30 
 # frame_time = 1/fps
 # update_limit = 0
 
@@ -68,12 +68,10 @@ class arbiter:
     global priorities
     def __init__(self, spikes, acks, thres):
         self.spikes=spikes
-        #np.copy(spikes.flatten()[self.spike_int])
         self.acks=acks
         self.prio=priorities
         self.thres=thres
         self.start=0
-        self.late=0
 
     #Keep track of time per frame update to drop requests outside of timeframe
     def check_time(self):
@@ -130,8 +128,6 @@ class arbiter:
 def setup(data):
     global ref_array
     diff=(data.astype("int16")-ref_array.astype("int16")) #storing difference as a signed 16-bit integer to allow -ve values
-    #over_thres=np.abs(diff)>=event_thres #boolean array for pixels that spiked
-    #data=np.where(over_thres,data,0)
     replacement=ref_array if scene else 0 #set whether reference scene is drawn or not
     # Charge equation:
     # rate*data/255 -> scaling charge rate according to pixel's max charge value (smaller max=less charge rate)
@@ -141,7 +137,6 @@ def setup(data):
     scaled_charge=np.floor((charge_rate*data.astype("int16")/255)*(exposure_time/charge_speed)).astype("int16")
     ref_spikes=np.where(scaled_charge>0, ref_array, 0)
     scaled_diff=(scaled_charge-ref_spikes.astype("int16"))
-    #over_scaled_thres = np.logical_and(np.abs(scaled_diff) >= event_thres, over_thres)
     over_scaled_thres=np.abs(scaled_diff)>=event_thres
     polarity=scaled_diff>0 #storing polarity of the pixel change after scaling
     spike_data=np.where(polarity, ref_spikes.astype("int16")+event_thres, ref_spikes.astype("int16")-event_thres)
