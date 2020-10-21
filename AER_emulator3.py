@@ -11,11 +11,11 @@ import cv2
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~SETUP AND INPUT PARAMETERS~~~~~~~~~~~~~~~~~~~~~~~~~~
 downscale_factor=4 #downscaling resolutions of image and video objects for faster processing, set to 1 for native resolution
-#pix_array = np.ndarray(img_size, dtype="object_")
 scene = True  # whether to draw the reference values or not, to see change need to find updates in which the change happens
               # otherwise the output will be black for all updates in which there are no spikes
-              # takes 11 updates to run out of spike-able pixels at default settings
+              # takes 11 updates to run out of spike-able pixels at default settings for the 'lena.bmp' image
 filename = "lena.bmp" #image filepath, ignored if video is true
+save_final = False #saves file, only for images
 video = False  #attempts to read from webcam/video file
 video_src = "videoplayback.mp4" #video filepath, ignored if webcam is true
 webcam = False #sets webcam on as source under 'video'
@@ -28,22 +28,20 @@ charge_speed = 0.0005  # time in seconds for every increment of charge, 0.000392
 event_thres = 15  # pixel integer value increase or decrease that would trigger an event
 arbitrate = True  # set whether there should be arbitration, affects performance, lowers frame update output
 arbiter_type = "FIFO"  # select arbitration scheme: "FIFO", "RAND", "FAIR"
-delta_thres = 0.05  # amount of time difference allowed between events before arbitration takes place
-fps = 30  # frames to generate per second
+delta_thres = 0.0001  # amount of time difference allowed between events before arbitration stops, timespan = earliest spike in the update+delta_thres
+fps = 60  # frames to generate per second
 frame_time = 1/fps  # the amount of time the emulator is allowed to process a frame for, can output multiple updates over this time with lighter loads
-#OR define frame time exactly for testing arbitration outputs, comment the line above and uncomment the line below
-#frame_time = 0.010
-update_limit = 0  # the amount of updates to frames allowed per frame time, 0 for no limit, 1 = pixels can spike once to event_thres and no more
-
+update_limit = 5  # the amount of updates to frames allowed per frame time, 0 for no limit, 1 = pixels can spike once to event_thres and no more
+                  # change this value accordingly to showcase arbitration outputs, the emulator works too fast to see a difference in the final output
 
 # Defaults
-# exposure_time = 0.100
+# exposure_time = 0.1
 # charge_rate = 1
 # charge_speed = 0.0005
 # event_thres = 15
 # arbitrate = False
 # arbiter_type = "FIXED"
-# delta_thres = 1
+# delta_thres = 0.0001
 # fps = 30  # frames to generate per second
 # frame_time = 1/fps
 # update_limit = 0
@@ -67,107 +65,94 @@ def check_img(imgname):
         return None
 
 class arbiter:
-    global priorities, acks, start
-    def __init__(self, spikes, thres):
-        self.spikes_og=spikes
-        self.spike_int=np.argsort(spikes, axis=None)
-        self.spikes=np.copy(spikes.flatten()[self.spike_int])
+    global priorities
+    def __init__(self, spikes, acks, thres):
+        self.spikes=spikes
+        #np.copy(spikes.flatten()[self.spike_int])
+        self.acks=acks
+        self.prio=priorities
         self.thres=thres
+        self.start=0
         self.late=0
 
     #Keep track of time per frame update to drop requests outside of timeframe
     def check_time(self):
-        if frame_time<time.time()-start:
+        if frame_time/2<time.time()-self.start:
             return True
         else:
             return False
 
     #Acknowledge
-    def ack(self, pix):
-        if pix is not None:
-            acks[np.where(self.spikes==pix)]=True
+    def ack(self, index):
+        self.acks[index]=True
 
     def process(self, time, timespan):
-        print(timespan)
-        print(np.where(self.spikes<=timespan))
-        return np.where(self.spikes<=timespan)
+        arr= np.where(self.spikes >= timespan, 0, self.spikes)
+        arr = np.where(self.spikes <= time, 0, arr)
+        return arr
+
+    def check_done(self):
+        return np.all(self.acks[self.spikes>0])
 
     #FIFO
     def arbi_fixed(self):
-        i=0
-        for event in self.spikes:
-            event_pos=self.spike_int
-            time=self.spikes[i]
-            span=time+self.thres
-            events=self.process(time, span)
-            print("here")
-            print(self.spikes[events])
-            print(self.spikes[events].shape[0])
-            if i+1 < self.spikes[events].shape[0]:
-                next_event=self.spikes[i+1]
-                if event <= next_event:
-                    print("event")
-                    print(event)
-                    print("next")
-                    print(next_event)
-                    self.ack(event)
-                    self.late = next_event
-                else:
-                    self.ack(next_event)
-                    self.late = event
-            i+=1
-            if self.check_time():
-                break
+        #arbitime=time.time()
+        if not self.spikes[self.spikes > 0].size==0:
+            self.start = np.min(self.spikes[self.spikes > 0])
+            self.acks = np.where(self.spikes<=self.start+self.thres, True, False)
+            #arbitime2=time.time()
+            #print("total time taken "+str(arbitime2-arbitime)+"sec")
+        return self.acks
 
     #Randomly switch requests
     def arbi_rand(self):
-        rand=np.random.random()
-        print(rand)
-        if rand>0.5:
-            self.ack(pix1)
-            self.late = pix2
-        else:
-            self.ack(pix2)
-            self.late = pix1
+        rand=np.random.random()/1000 #generate a random value for the current ack update
+        if not self.spikes[self.spikes > 0].size == 0:
+            self.start = np.min(self.spikes[self.spikes > 0])
+            self.start+=rand
+            self.acks = np.where(self.spikes <= self.start + self.thres, True, False)
+        return self.acks
 
     #Balance priorities
     def arbi_fair(self):
-        if priorities[pix1]<priorities[pix2]:
-            self.ack(pix1)
-            priorities[pix1]=priorities[pix1]+1/self.spikes[pix1]
-            self.late = pix2
-        else:
-            self.ack(pix2)
-            self.late = pix1
+        global priorities
+        np.seterr(divide='ignore', invalid='ignore') #ignore div by 0 since the values would not be evaluated
+        new_prio = np.where(self.spikes > 0, 1/self.spikes, 0).astype("double")
+        if not new_prio[new_prio>0].size==0:
+            min_prio = np.min(new_prio[new_prio > 0])
+            update_prio = self.prio+new_prio
+            self.start = np.min(update_prio[update_prio > 0])
+            self.acks = np.where(update_prio <= self.start+min_prio, True, False)
+            priorities=update_prio
+        return self.acks
+
 
 def setup(data):
-    global ref_array, acks
+    global ref_array
     diff=(data.astype("int16")-ref_array.astype("int16")) #storing difference as a signed 16-bit integer to allow -ve values
-    over_thres=np.abs(diff)>=event_thres #boolean array for pixels that spiked
-    data=np.where(over_thres,data,0)
+    #over_thres=np.abs(diff)>=event_thres #boolean array for pixels that spiked
+    #data=np.where(over_thres,data,0)
     replacement=ref_array if scene else 0 #set whether reference scene is drawn or not
     # Charge equation:
     # rate*data/255 -> scaling charge rate according to pixel's max charge value (smaller max=less charge rate)
-    #scaled_rate = charge_rate * self.max / 255
     # time/speed -> how many charge 'cycles' will be available with the given exposure time and charge speed
-    #charge_cycles = exposure_time / charge_speed
     # cycles*scaled_rate -> final integer value that the pixel reaches
     #final_val = charge_cycles * scaled_rate
-    scaled_charge=np.round((charge_rate*data/255)*(exposure_time/charge_speed)).astype("uint8")
-    # include polarity
-    # find scaled diff and see which pixels did actually spike
-    # set spiked pix values to pix+-thres, remember uint8
+    scaled_charge=np.floor((charge_rate*data.astype("int16")/255)*(exposure_time/charge_speed)).astype("int16")
     ref_spikes=np.where(scaled_charge>0, ref_array, 0)
-    scaled_diff=(scaled_charge.astype("int16")-ref_spikes.astype("int16"))
-    over_scaled_thres = np.logical_and(np.abs(scaled_diff) >= event_thres, over_thres)
+    scaled_diff=(scaled_charge-ref_spikes.astype("int16"))
+    #over_scaled_thres = np.logical_and(np.abs(scaled_diff) >= event_thres, over_thres)
+    over_scaled_thres=np.abs(scaled_diff)>=event_thres
     polarity=scaled_diff>0 #storing polarity of the pixel change after scaling
-    spike_data=np.where(polarity, ref_spikes+event_thres, ref_spikes-event_thres)
-    spike_data=np.where(over_scaled_thres, spike_data, 0)
+    spike_data=np.where(polarity, ref_spikes.astype("int16")+event_thres, ref_spikes.astype("int16")-event_thres)
+    spike_data=np.where(spike_data/255>1, 255, spike_data)#.astype("uint8")
+    spike_data=np.where(over_scaled_thres, spike_data, 0).astype("uint8")
     #Calculate spike time data and pass it into arbiter emulation
     arbi_data=np.where(over_scaled_thres, (charge_speed * event_thres / charge_rate * data / 255), 0)
-    emulate_arbiters(arbi_data, arbiter_type)
+    #Call to arbitrate
+    acks=emulate_arbiters(arbi_data, arbiter_type)
     final_array=np.where(over_scaled_thres & acks, spike_data, replacement) # pixels that don't spike are replaced with the selected replacement
-    ref_array=np.where(spike_data>0, spike_data, ref_array)
+    ref_array=np.where(over_scaled_thres, spike_data, ref_array)
     return final_array
 
 def frame(img):
@@ -176,32 +161,35 @@ def frame(img):
     time_spent = 0
     update_count = 0
     while not time_spent > frame_time:
-        # print("frame: "+str(frame_count))
+        #print("frame: "+str(update_count))
         if update_limit is not 0 and update_count > update_limit:
             break
         # frame data
         final = setup(img)
+        #cv2.imshow('temp',final)
+        #cv2.waitKey()
         finish = time.time()
         update_count += 1
         time_spent = finish - start
-    #print("total updates: "+str(update_count))
-    #print("total time for updates: "+str(time_spent))
+    print("total updates: "+str(update_count))
+    print("total time for updates: "+str(time_spent))
     return final
 
 def emulate_arbiters(spikes, arbi_type):
-    #Set arbiter logic and priorities here
-    global acks, img_size
+    #Set arbiter logic here
+    global img_size
     if arbitrate:
-        arbi = arbiter(spikes, delta_thres)
+        acks=np.zeros(img_size[::-1], dtype="bool") #reinitialise acks as pixels are reset
+        arbi = arbiter(spikes, acks, delta_thres)
         if arbi_type=="FIFO":
-            spikes=arbi.arbi_fixed()
+            acks=arbi.arbi_fixed()
         elif arbi_type=="RAND":
-            spikes=arbi.arbi_rand()
+            acks=arbi.arbi_rand()
         elif arbi_type=="FAIR":
-            spikes=arbi.arbi_fair()
+            acks=arbi.arbi_fair()
     else:
         acks=np.ones(img_size[::-1], dtype='bool') #set acks to all true if no arbitration takes place
-    return spikes
+    return acks
 
 def displayimg(name, data, winsize, move):
     size=img_size[0]*winsize
@@ -211,7 +199,7 @@ def displayimg(name, data, winsize, move):
     cv2.moveWindow(name, move[0], move[1])
 
 def img():
-    global img_size, final_array, ref_array, priorities, acks
+    global img_size, final_array, ref_array, priorities
     ogs = time.time()
     factor=2 #used for increasing opencv window sizes
     imgr = check_img(filename)
@@ -221,15 +209,16 @@ def img():
     ref_array = np.zeros(img_size[::-1], dtype="uint8")  # reference array, previous frame/old value
     #Cumulative priority measurement
     priorities=np.zeros(img_size[::-1], dtype="double")
-    acks=np.zeros(img_size[::-1], dtype="bool")
     displayimg('initial', img, factor, (500, 400))
-    print("file & img check takes: " + str(time.time() - ogs) + "sec")
+    #print("file & img check takes: " + str(time.time() - ogs) + "sec")
     final = frame(img)
     ogf = time.time()
     print("Actual exec time= " + str(ogf - ogs) + "sec")
     displayimg('output', final, factor, (628, 400))
     cv2.waitKey()
     cv2.destroyAllWindows()
+    if save_final:
+        cv2.imwrite("output.bmp", final)
 
 class get_frame:
     def __init__(self, cap):
@@ -248,9 +237,9 @@ class get_frame:
             return self.frame
 
 def video_out():
-    global img_size, final_array, ref_array, priorities, acks
+    global img_size, final_array, ref_array, priorities
     #ogs = time.time()
-    factor=2 #used for increasing opencv window sizes
+    #factor=2 #used for increasing opencv window sizes
     if not webcam:
         src = video_src
         cap = cv2.VideoCapture(src)
@@ -265,7 +254,6 @@ def video_out():
     ref_array = np.zeros(img_size[::-1], dtype="uint8")  # reference array, previous frame/old value
     # Cumulative priority measurement
     priorities = np.zeros(img_size[::-1], dtype="double")
-    acks = np.zeros(img_size[::-1], dtype="bool")
     while True:
         imgr=frames.next_frame()
         if imgr is not None:
@@ -282,7 +270,6 @@ def video_out():
 
 def main():
     # filename=input("Enter image name and extension (same directory):")
-    #global final_array, ref_array, img_size
     if not video:
         if is_file(filename):
             img()
