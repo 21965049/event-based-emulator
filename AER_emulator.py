@@ -127,6 +127,7 @@ class arbiter:
 
 def setup(data):
     global ref_array
+    np.seterr(divide='ignore', invalid='ignore') #ignore div by 0 since the values would not be evaluated
     diff=(data.astype("int16")-ref_array.astype("int16")) #storing difference as a signed 16-bit integer to allow -ve values
     replacement=ref_array if scene else 0 #set whether reference scene is drawn or not
     # Charge equation:
