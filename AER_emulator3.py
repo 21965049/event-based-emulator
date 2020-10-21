@@ -166,8 +166,8 @@ def frame(img):
         finish = time.time()
         update_count += 1
         time_spent = finish - start
-    print("total updates: "+str(update_count))
-    print("total time for updates: "+str(time_spent))
+    #print("total updates: "+str(update_count))
+    #print("total time for updates: "+str(time_spent))
     return final
 
 def emulate_arbiters(spikes, arbi_type):
