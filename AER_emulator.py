@@ -31,7 +31,7 @@ arbiter_type = "FIFO"  # select arbitration scheme: "FIFO", "RAND", "FAIR"
 delta_thres = 0.0001  # amount of time difference allowed between events before arbitration stops, timespan = earliest spike in the update+delta_thres
 fps = 30  # frames to generate per second
 frame_time = 1/fps  # the amount of time the emulator is allowed to process a frame for, can output multiple updates over this time with lighter loads
-update_limit = 5  # the amount of updates to frames allowed per frame time, 0 for no limit, 1 = pixels can spike once to event_thres and no more
+update_limit = 0  # the amount of updates to frames allowed per frame time, 0 for no limit, 1 = pixels can spike once to event_thres and no more
                   # change this value accordingly to showcase arbitration outputs, the emulator works too fast to see a difference in the final output
 
 # Defaults
@@ -128,7 +128,6 @@ class arbiter:
 def setup(data):
     global ref_array
     np.seterr(divide='ignore', invalid='ignore') #ignore div by 0 since the values would not be evaluated
-    diff=(data.astype("int16")-ref_array.astype("int16")) #storing difference as a signed 16-bit integer to allow -ve values
     replacement=ref_array if scene else 0 #set whether reference scene is drawn or not
     # Charge equation:
     # rate*data/255 -> scaling charge rate according to pixel's max charge value (smaller max=less charge rate)
@@ -162,6 +161,7 @@ def frame(img):
             break
         # frame data
         final = setup(img)
+        #can uncomment these and increase frame time to 100+ to see frame-by-frame changes
         #cv2.imshow('temp',final)
         #cv2.waitKey()
         finish = time.time()
